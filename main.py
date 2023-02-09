@@ -4,15 +4,15 @@ import numpy as np
 
 # Instruction Queue
 ## Format [[indx, Operation, storeTo, input1, input2, queuedStatus],]
-instQueue = [
-    [0, "add", 2, 1, 0, 0],
-    [1, "mul", 3, 2, 1, 0],
-    [2, "sub", 5, 1, 0, 0],
-]
+instQueue = {
+    0:["add", 2, 1, 0, 0],
+    1:["mul", 3, 2, 1, 0],
+    2:["sub", 5, 1, 0, 0],
+}
 
 # Architecture of core distribution
 ## Format: [[["list of ","operations supported"], #number of rows in Reservation Table]]
-cores = [[["add", "adi", "sub", "subi", "and", "or_", "xor", "not"],3], [["mul", "div"],3], [["mul", "div"],3]]
+cores = [[["add", "adi", "sub", "subi", "and", "or", "xor", "not"],3], [["mul", "div"],3], [["mul", "div"],3]]
 
 # Register File
 ## Format [data,] starting from 0
@@ -56,30 +56,33 @@ def lookUpRAT(addr):
 
 
 def dependencyFinder(instQue):
-    # format: [[InstructionWritingToRegister, registerUsingInstruction, InputNumberOfReader]]
+    # format: [[RegisterNumber, InstructionWritingToRegister, registerUsingInstruction, InputNumberOfReader]]
     raw = []
     
     # table of which instruction generates value for register
-    ## Format: [[registerIndex, LastInstructionStoredIndex]]
-    rut = []
+    ## Format: registerIndex: LastInstructionStoredIndex
+    rut = {}
 
     # listing all outputs that are inputs to next instructions
-    for ins in instQue:
-        rut.append([(ins[2]), ins[0]])
+    for indx in instQue:
+        # assigning register with value of instruction index 
+        rut[(instQue[indx][2])] = indx
+        # check if this instruction has dependency on previous
+        in1 = instQue[indx][3]
+        in2 = instQue[indx][4]
+        # input 1 of current inst depends on previous
+        if(in1 in rut.keys()):
+            raw.append([in1, rut[in1], indx, 0])
+        if(in2 in rut.keys()):
+            raw.append([in2, rut[in2], indx, 1])
+
+    return [rut, raw]
 
 
 def issueInstructions():
     pc = 0  ## program counter for pointing to Instruction Queue
 
-    # find an instruction that has no dependency and queue it and is not marked complete
-    for ins in instQueue:
-        if(ins[6] == 0):    ## check if it is not already sent to a table
-            pass
-
-
-    # # fetch instruction
-    # ins = instQ[pc]
-
+    print(dependencyFinder(instQue=instQueue))
 
 
 def main():
