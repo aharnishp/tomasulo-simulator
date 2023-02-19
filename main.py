@@ -127,8 +127,12 @@ def main():
     # 
     instLft = instQueue.copy()
 
-    # Start issuing
-    issueInstructions()
+    while(1):
+        # Start issuing
+        issueInstructions()\
+
+        break
+
 
 if(__name__ == "__main__"):
     main()
