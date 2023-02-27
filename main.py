@@ -26,6 +26,7 @@ import numpy as np
 
 
 # Instruction Queue
+#            0        1         2        3      4          5
 ## Format [[indx, Operation, storeTo, input1, input2, queuedStatus],]
 # instQueue = {
 #     0:["add", 2, 1, 0, 0],
@@ -65,7 +66,8 @@ writeback_delay = 1
 
 
 
-### Telemetries
+### Telemetries  :    has 3 levels = {0, 1, 2}
+issueTelemetry = 1
 dispatchTelemetry = 1
 broadcastTelemetry = 1
 
@@ -170,9 +172,20 @@ def broadcast(insID, outputValue):
     # print(insID, outputValue)
     
     # replace existing pointers in reservation table to execute.
-    for coreId in resst:
-        for ins in resst[coreID]
+    for coreID in resst:
+        for ins in resst[coreID]:
+            Qj = ins[5]
+            Qk = ins[6]
+            if(Qj == "i"+str(insID)):
+                ins[5] = outputValue
+                if(broadcastTelemetry == 2): print("replaced i"+str(insID), "with", outputValue, "for operand 1 in insID =", insID, "for core=", coreID)
 
+            if(Qk == "i"+str(insID)):
+                ins[6] = outputValue
+                if(broadcastTelemetry == 2): print("replaced i"+str(insID), "with", outputValue, "for operand 2 in insID =", insID, "for core=", coreID)
+
+def writeback(regAddr, value):
+    regF[regAddr] = value
 
 def dispatch(coreID, insNum):
     ins = resst[coreID][insNum]
@@ -227,25 +240,60 @@ def dispatch(coreID, insNum):
     else:
         broadcastQueue[targetClock+writeback_delay] = [[insId, outVal]]
 
+
+
+def findFreeCore(opCode):
+    # finding fastest core capable of executing this instruction with least queue
+    minDelay = -1
+    minDelayCoreID = -1
+    for coreID in resst:
+        # check if core can exec the opcode
+        if((opCode in cores[coreID][0])):
+            delay = cores[coreID][2][(cores[coreID][0].index(opCode))]
+            if(delay < minDelay or minDelay == -1): # uninitialized min delay
+                minDelay = delay
+                minDelayCoreID = coreID
+
+            
+
+
+def issue(clock):
+    if(issueTelemetry): print("Issuing")
+    
+    # find the next instruction in instQueue without checking dependency
+    for id in instQueue:
+        if(instQueue[id][5]==0):
+            ins = instQueue[id]
+            resst[coreID]
+
+
+##### MAIN #####
 clock = 0
+
+# calculate dependency penalty
 
 
 while(True):
     print("clock cycle=", clock)
-    ## dispatch stage
+
+    ## Dispatch stage
     for core in resst:
         pass
         # for ins in resst[core]:
         #     print("pending core:", core, " > ",  ins)
 
 
-    # Broadcasting
+    ## Broadcast Stage
     if(clock in broadcastQueue.keys()):
         pendingBrd = broadcastQueue[clock]
 
         if(broadcastTelemetry): print("pendingbroadcasts: ", pendingBrd)
         for brd in pendingBrd:
             broadcast(insID=brd[0], outputValue=[1])
+
+
+    ## Issue Stage (written out of order as to run issued instruction in next cycle
+    issue(clock)
         
 
     # for brd in broadcastQueue:
