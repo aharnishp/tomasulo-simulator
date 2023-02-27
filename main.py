@@ -85,7 +85,7 @@ writeback_delay = 1
 ### Telemetries:    has 3 levels = {0, 1, 2}
 issueTelemetry = 1
 dispatchTelemetry = 1
-broadcastTelemetry = 2
+broadcastTelemetry = 1
 
 warningTelemetry = 1
 
@@ -94,14 +94,14 @@ warningTelemetry = 1
 
 ## Creating reservation table
 # Format = {
-#   coreID: [        Vj = float         Qj = pointer stored as string
-#       [insID, Busy, OpCode, Vj, Vk, Qj, Qk, ImmediateData, DispatchedStageClockCycle],
-#       [insID, Busy, OpCode, Vj, Vk, Qj, Qk, ImmediateData, DispatchedStageClockCycle],
-#       [insID, Busy, OpCode, Vj, Vk, Qj, Qk, ImmediateData, DispatchedStageClockCycle],
+#   coreID: [0   1      2     3   4   5   6         7           8        9          10
+#       [insID, Busy, OpCode, Vj, Vk, Qj, Qk, ImmediateData, IssueCLK, DispCLK, WritebackCLK],
+#       [insID, Busy, OpCode, Vj, Vk, Qj, Qk, ImmediateData, IssueCLK, DispCLK, WritebackCLK],
+#       [insID, Busy, OpCode, Vj, Vk, Qj, Qk, ImmediateData, IssueCLK, DispCLK, WritebackCLK],
 #   ],
-#   coreID: [0   1      2     3   4   5   6     7
-#       [insID, Busy, OpCode, Vj, Vk, Qj, Qk, ImmediateData, DispatchedStageClockCycle],
-#       [insID, Busy, OpCode, Vj, Vk, Qj, Qk, ImmediateData, DispatchedStageClockCycle],
+#   coreID: [        Vj = float         Qj = pointer stored as string
+#       [insID, Busy, OpCode, Vj, Vk, Qj, Qk, ImmediateData, IssueCLK, DispCLK, WritebackCLK],
+#       [insID, Busy, OpCode, Vj, Vk, Qj, Qk, ImmediateData, IssueCLK, DispCLK, WritebackCLK],
 #   ]
 # }
 
@@ -178,7 +178,11 @@ def exec(opc, Val1, Val2, immediateData = 0):
     elif(opc == "muli"):
         return Val1 * immediateData
     elif(opc == "div"):
-        return Val1 / Val2
+        if(Val2 != 0):
+            return Val1 / Val2
+        else:
+            print("FATAL ERROR: Divisin by zero. clock=",clock)
+            return -1
     elif(opc == "load"):
         addr = immediateData + Val1
         if(addr in (memory.keys())):
@@ -209,20 +213,22 @@ def broadcast(insID, outputValue):
     # replace existing pointers in reservation table to execute.    
     for coreID in resst:
         for indx, ins in enumerate(resst[coreID]):
-            if(outputValue is not None):
+            if(outputValue is not None and ins[1] == 1): # if output needs to be stored && instruction is not already completed
                 Qj = ins[5]
                 Qk = ins[6]
                 if(Qj == "i"+str(insID)):
-                    ins[5] = outputValue
+                    ins[5] = None
+                    ins[3] = outputValue
                     if(broadcastTelemetry == 2): print("replaced i"+str(insID), "with", outputValue, "for operand 1 in insID =", insID, "for core=", coreID)
 
                 if(Qk == "i"+str(insID)):
-                    ins[6] = outputValue
+                    ins[6] = None
+                    ins[4] = outputValue
                     if(broadcastTelemetry == 2): print("replaced i"+str(insID), "with", outputValue, "for operand 2 in insID =", insID, "for core=", coreID)
                 
             # searching for insID in resst
             if(insID == ins[0]):
-                if(broadcastTelemetry): print("Matched Inst. to delete")
+                if(broadcastTelemetry == 2): print("BROADCAST: Matched Instructions to delete.")
                 delCoreID = coreID
                 delInsIndex = indx
 
@@ -233,15 +239,16 @@ def broadcast(insID, outputValue):
 
 
     # remove from reservation table
-    executedIns = resst[delCoreID].pop(delInsIndex)
-    if(broadcastTelemetry): print("Instruction Broadcasted =", executedIns)
+    # executedIns = resst[delCoreID].pop(delInsIndex)
+    resst[delCoreID][delInsIndex][1] = 0
+    if(broadcastTelemetry): print("Instruction Broadcasted =", resst[delCoreID][delInsIndex])
 
     # remove from RAT able
     ## verify RAT table pointer was not over-written
     
     if(RegtoStore in rat.keys()):
         if(rat[RegtoStore] == "i"+str(insID)):
-            if(broadcastTelemetry): print("deleting pointer in rat for insID =", insID)
+            if(broadcastTelemetry): print("BROADCAST: deleting pointer in rat for insID =", insID, " for addr =", RegtoStore)
             del rat[RegtoStore]
         else:
             if(broadcastTelemetry): print("mismatched pointer in RAT, not deleted. addr =",RegtoStore, "  insID =",insID)
@@ -322,15 +329,24 @@ def dispatch(coreID, insNum):
     else:
         writeBackQueue[targetClock+writeback_delay] = [[insId, outVal]]
 
+    # updating resst clock information for reference
+    ## updating dispatch clk
+    resst[coreID][insNum][9] = clock
+    resst[coreID][insNum][10] = targetClock + writeback_delay
+
 
 def dispatcher(coreID):
     # find easiest instruction to execute whose data is available (Qj == None & Qk == None)
     if(coreFree[coreID]):
         for indx, ins in enumerate(resst[coreID]):
-            if(dispatchTelemetry): print()
-            if(ins[5] is None and ins[6] is None):
-                if(dispatchTelemetry): print("DISPATCHING: core:",coreID," Ins:", ins)
-                dispatch(coreID, indx)
+            # check if is not issued in the same clock cycle
+            if(ins[8] < clock):
+                # check if (all data is available) and is not completed
+                if((ins[5] is None and ins[6] is None) and ins[1] == 1):
+                    if(dispatchTelemetry): print("DISPATCHING: core:",coreID," Ins:", ins)
+                    dispatch(coreID, indx)
+            else:
+                if(dispatchTelemetry == 2): print("DISPATCH2: Instruction",ins[0],"ignored as issued in the same clock cycle (", clock ,").")
     else:
         if(dispatchTelemetry): print("core:", coreID, "is busy.")
 
@@ -347,9 +363,10 @@ def findBestCore(opCode):
             count = 0
             delay = 0
             for ins in resst[coreID]:   # summing delay for queues
-                thisOpCode = ins[2]
-                count += 1
-                delay += cores[coreID][2][(cores[coreID][0].index(thisOpCode))]
+                if(ins[1]==1):
+                    thisOpCode = ins[2]
+                    count += 1
+                    delay += cores[coreID][2][(cores[coreID][0].index(thisOpCode))]
             # adding required delay for current operation
             delay += cores[coreID][2][(cores[coreID][0].index(opCode))]
             if((delay < minDelay or minDelay == -1) and count < cores[coreID][1]): # uninitialized min delay
@@ -381,7 +398,7 @@ def issue(clock):
             # finding val1 in rat
             if(ins[2] in rat.keys() and rat[ins[2]][0] == "i"):
                 # val1 = "i" + str(ins[2])
-                Qj = "i" + str(ins[2])
+                Qj = "i" + (rat[ins[2]][1:])  # store the pointer to the insID whose result this is
             else: 
                 # extract value from register at this clock
                 if(ins[2] in regF.keys()):
@@ -394,7 +411,7 @@ def issue(clock):
             # finding val2 in rat
             if(ins[3] in rat.keys() and rat[ins[3]][0] == "i"):
                 # val1 = "i" + str(ins[3])
-                Qk = "i" + str(ins[3])
+                Qk = "i" + (rat[ins[3]][1:])  # store the pointer to the insID whose result this is
             else: 
                 # extract value from register at this clock
                 if(ins[3] in regF.keys()):
@@ -411,7 +428,7 @@ def issue(clock):
             #                             [insID, Busy, OpCode, Vj, Vk, Qj, Qk, DispatchedStageClockCycle]
             bestCore = findBestCore(ins[0])
             if(bestCore > -1):
-                resst[bestCore].append([id, 1, ins[0], Vj, Vk, Qj, Qk, immediateData, None])
+                resst[bestCore].append([id, 1, ins[0], Vj, Vk, Qj, Qk, immediateData, clock, None, None])
             else:
                 if(issueTelemetry): print("Reservation Table full / no core able to exec this.")
                 continue
@@ -446,20 +463,28 @@ while(True):
         for ins in resst[core]:
             print("core:", core, " > ",  ins)
 
+
+    ## Issue Stage
+    issue(clock)
     
+
+
     ## Dispatch stage
     for coreID in resst:
         dispatcher(coreID=coreID)
+
 
     ## Broadcast Stage      (and remove instruction itself from reservation station)
     if(clock in broadcastQueue.keys()):
         pendingBrd = broadcastQueue[clock]
 
-        if(broadcastTelemetry): print("pendingbroadcasts: ", pendingBrd)
+        if(broadcastTelemetry): print("Broadcasting: ", pendingBrd)
         for brd in pendingBrd:
-            broadcast(insID=brd[0], outputValue=[1])
+            broadcast(insID=brd[0], outputValue=brd[1])
 
-    # Writeback Queue 
+
+    ## Writeback Queue      (Separated from broadcast just for simulation)
+    ##### Write back refers to writing memory. Broadcast is used for forwarding result directly.
     if(clock in writeBackQueue.keys()):
         pendingWB = writeBackQueue[clock]
 
@@ -470,8 +495,6 @@ while(True):
 
         del writeBackQueue[clock]
 
-    ## Issue Stage (written out of order as to run issued instruction in next cycle
-    issue(clock)
 
     # checking if all instructions are executed
     allInsIssued = 1
