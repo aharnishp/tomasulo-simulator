@@ -37,7 +37,7 @@ instQueue = {
     2:["mul", 0, 2, 4, 0, 0],
     3:["sub", 8, 2, 6, 0, 0],
     4:["div",10, 0, 6, 0, 0],
-    4:["add", 6, 8, 2, 0, 0],
+    5:["add", 6, 8, 2, 0, 0],
 }
 
 ## RAT table
@@ -86,7 +86,7 @@ issueTelemetry = 1
 dispatchTelemetry = 1
 broadcastTelemetry = 2
 
-warnings = 1
+warningTelemetry = 1
 
 ##### OPERATIONAL VARIABLES #####
 
@@ -94,13 +94,13 @@ warnings = 1
 ## Creating reservation table
 # Format = {
 #   coreID: [        Vj = float         Qj = pointer stored as string
-#       [insID, Busy, OpCode, Vj, Vk, Qj, Qk, DispatchedStageClockCycle],
-#       [insID, Busy, OpCode, Vj, Vk, Qj, Qk, DispatchedStageClockCycle],
-#       [insID, Busy, OpCode, Vj, Vk, Qj, Qk, DispatchedStageClockCycle],
+#       [insID, Busy, OpCode, Vj, Vk, Qj, Qk, ImmediateData, DispatchedStageClockCycle],
+#       [insID, Busy, OpCode, Vj, Vk, Qj, Qk, ImmediateData, DispatchedStageClockCycle],
+#       [insID, Busy, OpCode, Vj, Vk, Qj, Qk, ImmediateData, DispatchedStageClockCycle],
 #   ],
 #   coreID: [0   1      2     3   4   5   6     7
-#       [insID, Busy, OpCode, Vj, Vk, Qj, Qk, DispatchedStageClockCycle],
-#       [insID, Busy, OpCode, Vj, Vk, Qj, Qk, DispatchedStageClockCycle],
+#       [insID, Busy, OpCode, Vj, Vk, Qj, Qk, ImmediateData, DispatchedStageClockCycle],
+#       [insID, Busy, OpCode, Vj, Vk, Qj, Qk, ImmediateData, DispatchedStageClockCycle],
 #   ]
 # }
 
@@ -137,8 +137,8 @@ writeBackQueue = {}
 print("Empty reservation station:", resst)
 
 
-print("adding dummy data to reservation table")
-resst[0].append([2, 1, "add", 56, 34, None, None, None])
+# print("adding dummy data to reservation table")
+# resst[0].append([2, 1, "add", 56, 34, None, None, None])
 
 
 ##### FUNCTIONS #####
@@ -192,7 +192,7 @@ def evaluatePointer(inPointer):
 
 def broadcast(insID, outputValue):
     RegtoStore = (instQueue[insID][2])
-    regF[RegtoStore] = outputValue
+    # regF[RegtoStore] = outputValue
     # print(insID, outputValue)
     
     # storing addr of instruction to delete later 
@@ -244,7 +244,7 @@ def broadcast(insID, outputValue):
         elif(len(broadcastQueue[clock]) == 1):
             broadcastQueue[clock] = []
         else:
-            if(warnings): print("WARNING: broadcastQueue was already cleared.")
+            if(warningTelemetry): print("WARNING: broadcastQueue was already cleared.")
 
 
 def writeback(regAddr, value):
@@ -306,24 +306,30 @@ def dispatch(coreID, insNum):
 
 
 
-def findFreeCore(opCode):
+def findBestCore(opCode):
     # finding fastest core capable of executing this instruction with least queue
     minDelay = -1
     minDelayCoreID = -1
     for coreID in resst:
         # check if core can exec the opcode
         if((opCode in cores[coreID][0])):
+            # counting number of entries in reservation table for that core.
+            count = 0
             delay = 0
             for ins in resst[coreID]:   # summing delay for queues
                 thisOpCode = ins[2]
+                count += 1
                 delay += cores[coreID][2][(cores[coreID][0].index(thisOpCode))]
             # adding required delay for current operation
             delay += cores[coreID][2][(cores[coreID][0].index(opCode))]
-            if(delay < minDelay or minDelay == -1): # uninitialized min delay
+            if((delay < minDelay or minDelay == -1) and count < cores[coreID][1]): # uninitialized min delay
                 minDelay = delay
                 minDelayCoreID = coreID
                 # BETA-ONLY:
-    return coreID
+    if(minDelayCoreID == -1):
+        if(warningTelemetry): print("Warning: No free core supports the instruction:", opCode)
+    return minDelayCoreID
+#  FIXME:
             
 
 
@@ -339,6 +345,7 @@ def issue(clock):
             Vk = None
             Qj = None
             Qk = None
+            immediateData = ins[4]
 
             # find input sources according to the RAT table.
 
@@ -351,7 +358,7 @@ def issue(clock):
                 if(ins[2] in regF.keys()):
                     Vj = regF[ins[2]]
                 else:
-                    if(warnings == 1): print("WARNING: no link in rat found & addr uninitialized in regF. insID =",id,"  clock =",clock,"  addr =", ins[2])
+                    if(warningTelemetry == 1): print("WARNING: no link in rat found & addr uninitialized in regF. insID =",id,"  clock =",clock,"  addr =", ins[2])
                     Vj = 0
                     regF[ins[2]] = 0
 
@@ -364,7 +371,7 @@ def issue(clock):
                 if(ins[3] in regF.keys()):
                     Vk = regF[ins[3]]
                 else:
-                    if(warnings == 1): print("WARNING: no link in rat found & addr uninitialized in regF. insID =",id,"  clock =",clock,"  addr =", ins[3])
+                    if(warningTelemetry == 1): print("WARNING: no link in rat found & addr uninitialized in regF. insID =",id,"  clock =",clock,"  addr =", ins[3])
                     Vk = 0
                     regF[ins[3]] = 0
 
@@ -373,7 +380,12 @@ def issue(clock):
 
 
             #                             [insID, Busy, OpCode, Vj, Vk, Qj, Qk, DispatchedStageClockCycle]
-            resst[findFreeCore(ins[1])].append([id, 1, ins[0], Vj, Vk, Qj, Qk, None])
+            bestCore = findBestCore(ins[0])
+            if(bestCore > -1):
+                resst[bestCore].append([id, 1, ins[0], Vj, Vk, Qj, Qk, immediateData, None])
+            else:
+                if(issueTelemetry): print("Reservation Table full / no core able to exec this.")
+                continue
 
             # insert current output address to RAT Table with link
             rat[ins[1]] = "i"+str(id)
@@ -384,8 +396,8 @@ def issue(clock):
             # TODO:
             return 0  # 0 if issued
             # break
-        print("All instructions were issued")
-        return 1      # 1 if unable to issue
+    print("No instructions were issued")
+    return 0      # 1 if unable to issue
 
 ##### MAIN #####
 clock = 0
@@ -398,11 +410,18 @@ allInsIssued = 0
 while(True):
     print("clock cycle =", clock)
 
+    print("Reservation Table = ")
+    for core in resst:
+        for ins in resst[core]:
+            print("core:", core, " > ",  ins)
+
+    
     ## Dispatch stage
     for core in resst:
         # find a suitable instruction to execute without dependencies
         for ins in resst[core]:
-            print("pending core:", core, " > ",  ins)
+            pass
+            # print("pending core:", core, " > ",  ins)
 
 
     ## Broadcast Stage      (and remove instruction itself from reservation station)
@@ -413,18 +432,29 @@ while(True):
         for brd in pendingBrd:
             broadcast(insID=brd[0], outputValue=[1])
 
+    # Writeback Queue 
+    if(clock in writeBackQueue.keys()):
+        pendingWB = writeBackQueue[clock]
+
+        if(broadcastTelemetry): print("pending writeback: ", pendingWB)
+        for wb in pendingWB:
+            RegtoStore = (instQueue[wb[0]][2])
+            writeback(regAddr=RegtoStore, value=wb[1])
+
+        del writeBackQueue[clock]
 
     ## Issue Stage (written out of order as to run issued instruction in next cycle
-    if(issue(clock)):
-        allInsIssued = 1
-        
+    issue(clock)
 
-    # for brd in broadcastQueue:
+    # checking if all instructions are executed
+    allInsIssued = 1
+    for  insID in instQueue:
+        if(instQueue[insID][5] == 0):
+            allInsIssued = 0
 
-    # check for available broadcasts at this clock cycle
 
 
-    # TODO: Add exit condition
+    # FIXME: Add exit condition
     if(len(broadcastQueue) == 0 and len(writeBackQueue) == 0 and allInsIssued == 1):
         break
     clock += 1
