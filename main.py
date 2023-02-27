@@ -17,29 +17,43 @@
 
 
 
+# TODO:
+# Dispatch out of order
 
 
 
-import numpy as np
+# import numpy as np
 
 ##### INPUT VARIABLES #####
 
 
 # Instruction Queue
-#            0        1         2        3      4          5
-## Format [[indx, Operation, storeTo, input1, input2, queuedStatus],]
-# instQueue = {
+#                     0        1         2        3         4              5
+## Format {indx: [Operation, storeTo, input1, input2, immediateData, queuedStatus],}
+# instQueue = {, 0
 #     0:["add", 2, 1, 0, 0],
 #     1:["mul", 3, 2, 1, 0],
 #     2:["sub", 5, 1, 0, 0],
 # }
+# instQueue = {
+#     0:["add", 2, 4, 1, 0],
+#     1:["div", 1, 2, 1, 0],
+#     2:["sub", 4, 1, 2, 0],
+#     3:["add", 1, 2, 3, 0],
+# }
 instQueue = {
-    0:["add", 2, 4, 1, 0],
-    1:["div", 1, 2, 1, 0],
-    2:["sub", 4, 1, 2, 0],
-    3:["add", 1, 2, 3, 0],
+    # indx 0  1  2  3  4   5
+    0:["load",6, 2, 0,34, 0],
+    1:["load",2, 3, 0,45, 0],
+    2:["mul", 0, 2, 4, 0, 0],
+    3:["sub", 8, 2, 6, 0, 0],
+    4:["div",10, 0, 6, 0, 0],
+    4:["add", 6, 8, 2, 0, 0],
 }
 
+## RAT table
+# Format => {2:"i5"}
+rat = {}
 
 # Architecture of core distribution
 ## Format: [[["list of ","operations supported"], #number of rows in Reservation Table, [executionDuration]]]
@@ -51,11 +65,18 @@ cores = [
 
 
 ## Dictionary of register file
+# regF = {
+#     0:2.72,
+#     1:3.14,
+#     2:-0.27,
+#     3:5.0,
+# }
 regF = {
-    0:2.72,
-    1:3.14,
-    2:-0.27,
-    3:5.0,
+    0:0,
+    1:0,
+    2:100,
+    3:200,
+    4:2.5,
 }
 
 ##### PARAMETERS #####
@@ -66,10 +87,10 @@ writeback_delay = 1
 
 
 
-### Telemetries  :    has 3 levels = {0, 1, 2}
+### Telemetries:    has 3 levels = {0, 1, 2}
 issueTelemetry = 1
 dispatchTelemetry = 1
-broadcastTelemetry = 1
+broadcastTelemetry = 2
 
 ##### OPERATIONAL VARIABLES #####
 
@@ -81,8 +102,7 @@ broadcastTelemetry = 1
 #       [insID, Busy, OpCode, Vj, Vk, Qj, Qk, DispatchedStageClockCycle],
 #       [insID, Busy, OpCode, Vj, Vk, Qj, Qk, DispatchedStageClockCycle],
 #   ],
-#   coreID: [
-#       [insID, Busy, OpCode, Vj, Vk, Qj, Qk, DispatchedStageClockCycle],
+#   coreID: [0   1      2     3   4   5   6     7
 #       [insID, Busy, OpCode, Vj, Vk, Qj, Qk, DispatchedStageClockCycle],
 #       [insID, Busy, OpCode, Vj, Vk, Qj, Qk, DispatchedStageClockCycle],
 #   ]
@@ -90,8 +110,7 @@ broadcastTelemetry = 1
 
 # Qj examples
 # Qj = r12 pointing to regF[12]
-# Qj = c2i4 pointing to instruction stored in reservation table of Cth core and Ith instruction
-# Qj = i7 pointing to output of instructionId == 7
+# Qj = i7 pointing to output of instructionId 7
 
 
 # generate empty reservation tables
@@ -171,9 +190,13 @@ def broadcast(insID, outputValue):
     regF[RegtoStore] = outputValue
     # print(insID, outputValue)
     
-    # replace existing pointers in reservation table to execute.
+    # storing addr of instruction to delete later 
+    delCoreID = -1
+    delInsIndex = -1
+
+    # replace existing pointers in reservation table to execute.    
     for coreID in resst:
-        for ins in resst[coreID]:
+        for indx, ins in enumerate(resst[coreID]):
             Qj = ins[5]
             Qk = ins[6]
             if(Qj == "i"+str(insID)):
@@ -183,6 +206,29 @@ def broadcast(insID, outputValue):
             if(Qk == "i"+str(insID)):
                 ins[6] = outputValue
                 if(broadcastTelemetry == 2): print("replaced i"+str(insID), "with", outputValue, "for operand 2 in insID =", insID, "for core=", coreID)
+            
+            # searching for insID in resst
+            if(insID == ins[0]):
+                if(broadcastTelemetry): print("Matched Inst. to delete")
+                delCoreID = coreID
+                delInsIndex = indx
+
+
+    # remove from reservation table
+    executedIns = resst[delCoreID].pop(delInsIndex)
+    if(broadcastTelemetry): print("Instruction Broadcasted =", executedIns)
+
+    # remove from RAT able
+    ## verify RAT table pointer was not over-written
+    if(insID[1] in rat.keys()):
+        if(rat[insID[1]] == "i"+str(insID)):
+            if(broadcastTelemetry): print("deleting pointer in rat for insID =", insID)
+            del rat[insID[1]]
+        else:
+            if(broadcastTelemetry): print("mismatched pointer in RAT, not deleted")
+    else:
+        if(broadcastTelemetry): print("Not found in RAT insID =", insID)
+
 
 def writeback(regAddr, value):
     regF[regAddr] = value
@@ -249,7 +295,12 @@ def findFreeCore(opCode):
     for coreID in resst:
         # check if core can exec the opcode
         if((opCode in cores[coreID][0])):
-            delay = cores[coreID][2][(cores[coreID][0].index(opCode))]
+            delay = 0
+            for ins in resst[coreID]:   # summing delay for queues
+                thisOpCode = ins[2]
+                delay += cores[coreID][2][(cores[coreID][0].index(thisOpCode))]
+            # adding required delay for current operation
+            delay += cores[coreID][2][(cores[coreID][0].index(opCode))]
             if(delay < minDelay or minDelay == -1): # uninitialized min delay
                 minDelay = delay
                 minDelayCoreID = coreID
@@ -260,12 +311,44 @@ def findFreeCore(opCode):
 def issue(clock):
     if(issueTelemetry): print("Issuing")
     
-    # find the next instruction in instQueue without checking dependency
+    # find the next instruction in instQueue without caring about dependency
     for id in instQueue:
-        if(instQueue[id][5]==0):
+        if(instQueue[id][4]==0):
             ins = instQueue[id]
-            resst[coreID]
 
+            Vj = None
+            Vk = None
+            Qj = None
+            Qk = None
+
+            # find input sources according to the RAT table.
+
+            # finding val1 in rat
+            if(ins[2] in rat.keys() and rat[ins[2]][0] == "i"):
+                # val1 = "i" + str(ins[2])
+                Qj = "i" + str(ins[2])
+            else: 
+                # extract value from register at this clock
+                Vj = regF[ins[2]]
+
+
+            # finding val2 in rat
+            if(ins[3] in rat.keys() and rat[ins[3]][0] == "i"):
+                # val1 = "i" + str(ins[3])
+                Qk = "i" + str(ins[3])
+            else: 
+                # extract value from register at this clock
+                Vk = regF[ins[3]]
+
+
+
+            #                             [insID, Busy, OpCode, Vj, Vk, Qj, Qk, DispatchedStageClockCycle]
+            resst[findFreeCore(ins[1])] = [id, 1, ins[0], Vj, Vk, Qj, Qk, None]
+
+            # insert current output address to RAT Table with link
+            rat[ins[1]] = "i"+id
+
+            # TODO:
 
 ##### MAIN #####
 clock = 0
@@ -274,16 +357,16 @@ clock = 0
 
 
 while(True):
-    print("clock cycle=", clock)
+    print("clock cycle =", clock)
 
     ## Dispatch stage
     for core in resst:
-        pass
-        # for ins in resst[core]:
-        #     print("pending core:", core, " > ",  ins)
+        # find a suitable instruction to execute without dependencies
+        for ins in resst[core]:
+            print("pending core:", core, " > ",  ins)
 
 
-    ## Broadcast Stage
+    ## Broadcast Stage      (and remove instruction itself from reservation station)
     if(clock in broadcastQueue.keys()):
         pendingBrd = broadcastQueue[clock]
 
