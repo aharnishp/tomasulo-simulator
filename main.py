@@ -30,17 +30,6 @@
 # Instruction Queue
 #                     0        1         2        3         4              5
 ## Format {indx: [Operation, storeTo, input1, input2, immediateData, queuedStatus],}
-# instQueue = {, 0
-#     0:["add", 2, 1, 0, 0],
-#     1:["mul", 3, 2, 1, 0],
-#     2:["sub", 5, 1, 0, 0],
-# }
-# instQueue = {
-#     0:["add", 2, 4, 1, 0],
-#     1:["div", 1, 2, 1, 0],
-#     2:["sub", 4, 1, 2, 0],
-#     3:["add", 1, 2, 3, 0],
-# }
 instQueue = {
     # indx 0  1  2  3  4   5
     0:["load",6, 2, 0,34, 0],
@@ -58,19 +47,13 @@ rat = {}
 # Architecture of core distribution
 ## Format: [[["list of ","operations supported"], #number of rows in Reservation Table, [executionDuration]]]
 cores = [
-            [["add", "adi", "sub", "subi", "and", "or", "xor", "not"],3,[2,2,2,2,2,2,2,2]], ## coreID 0
+            [["add", "adi", "sub", "subi", "and", "or", "xor", "not", "load"],3,[2,2,2,2,2,2,2,2,2]], ## coreID 0
             [["mul", "div"],3,[10,40]],     ## coreID = 1
             [["mul", "div"],3,[10,40]]      ## coreID = 2
         ]
 
 
 ## Dictionary of register file
-# regF = {
-#     0:2.72,
-#     1:3.14,
-#     2:-0.27,
-#     3:5.0,
-# }
 regF = {
     0:0,
     1:0,
@@ -78,6 +61,17 @@ regF = {
     3:200,
     4:2.5,
 }
+
+
+## Memory to load data from
+memory = {
+    134: 256,
+    245: 512,
+}
+
+
+
+
 
 ##### PARAMETERS #####
 writeback_delay = 1
@@ -91,6 +85,8 @@ writeback_delay = 1
 issueTelemetry = 1
 dispatchTelemetry = 1
 broadcastTelemetry = 2
+
+warnings = 1
 
 ##### OPERATIONAL VARIABLES #####
 
@@ -108,7 +104,7 @@ broadcastTelemetry = 2
 #   ]
 # }
 
-# Qj examples
+# Examples of Qj
 # Qj = r12 pointing to regF[12]
 # Qj = i7 pointing to output of instructionId 7
 
@@ -132,11 +128,6 @@ broadcastQueue = {}
 writeBackQueue = {}
 
 
-# Format2 = [
-#   [clock1,[[insID, outputValue],[insID, outputValue]]],
-#   [clock2, [[insID, outputValue]]],
-# ]
-# broadcastQueue = []
 
 
 ##### INITIALIZATIONS #####
@@ -155,17 +146,19 @@ resst[0].append([2, 1, "add", 56, 34, None, None, None])
 ##### FUNCTIONS #####
 
 
-def exec(opc, Val1, Val2):
+def exec(opc, Val1, Val2, immediateData = 0):
     if(opc == "add"):
         return Val1 + Val2
     elif(opc == "adi"):
-        return Val1 + Val2
+        return Val1 + Val2 + immediateData
     elif(opc == "sub"):
         return Val1 - Val2
     elif(opc == "subi"):
-        return Val1 + Val2
+        return Val1 + Val2 + immediateData
     elif(opc == "and"):
         return Val1 & Val2
+    elif(opc == "andi"):
+        return Val1 & immediateData
     elif(opc == "or"):
         return Val1 | Val2
     elif(opc == "xor"):
@@ -175,8 +168,20 @@ def exec(opc, Val1, Val2):
         return not(Val1)
     elif(opc == "mul"):
         return Val1 * Val2
+    elif(opc == "muli"):
+        return Val1 * immediateData
     elif(opc == "div"):
         return Val1 / Val2
+    elif(opc == "load"):
+        addr = immediateData + Val1
+        if(addr in (memory.keys())):
+            return memory[addr]
+        else:   
+            return 0
+    # elif(opc == "store"):
+    #     addr = immediateData + Val1
+        
+    #     return None
 
 def evaluatePointer(inPointer):
     if(inPointer[0]== 'r'):
@@ -197,16 +202,17 @@ def broadcast(insID, outputValue):
     # replace existing pointers in reservation table to execute.    
     for coreID in resst:
         for indx, ins in enumerate(resst[coreID]):
-            Qj = ins[5]
-            Qk = ins[6]
-            if(Qj == "i"+str(insID)):
-                ins[5] = outputValue
-                if(broadcastTelemetry == 2): print("replaced i"+str(insID), "with", outputValue, "for operand 1 in insID =", insID, "for core=", coreID)
+            if(outputValue is not None):
+                Qj = ins[5]
+                Qk = ins[6]
+                if(Qj == "i"+str(insID)):
+                    ins[5] = outputValue
+                    if(broadcastTelemetry == 2): print("replaced i"+str(insID), "with", outputValue, "for operand 1 in insID =", insID, "for core=", coreID)
 
-            if(Qk == "i"+str(insID)):
-                ins[6] = outputValue
-                if(broadcastTelemetry == 2): print("replaced i"+str(insID), "with", outputValue, "for operand 2 in insID =", insID, "for core=", coreID)
-            
+                if(Qk == "i"+str(insID)):
+                    ins[6] = outputValue
+                    if(broadcastTelemetry == 2): print("replaced i"+str(insID), "with", outputValue, "for operand 2 in insID =", insID, "for core=", coreID)
+                
             # searching for insID in resst
             if(insID == ins[0]):
                 if(broadcastTelemetry): print("Matched Inst. to delete")
@@ -229,9 +235,21 @@ def broadcast(insID, outputValue):
     else:
         if(broadcastTelemetry): print("Not found in RAT insID =", insID)
 
+    # remove from broadcast queue
+    if(clock in broadcastQueue.keys()):
+        if(len(broadcastQueue[clock]) > 1):     # multiple broadcast at sametime
+            for i in range(len(broadcastQueue[clock])):
+                if(broadcastQueue[clock][i][0] == insID):
+                    broadcastQueue[clock].pop(i)
+        elif(len(broadcastQueue[clock]) == 1):
+            broadcastQueue[clock] = []
+        else:
+            if(warnings): print("WARNING: broadcastQueue was already cleared.")
+
 
 def writeback(regAddr, value):
-    regF[regAddr] = value
+    if(value is not None):
+        regF[regAddr] = value
 
 def dispatch(coreID, insNum):
     ins = resst[coreID][insNum]
@@ -304,7 +322,8 @@ def findFreeCore(opCode):
             if(delay < minDelay or minDelay == -1): # uninitialized min delay
                 minDelay = delay
                 minDelayCoreID = coreID
-
+                # BETA-ONLY:
+    return coreID
             
 
 
@@ -313,7 +332,7 @@ def issue(clock):
     
     # find the next instruction in instQueue without caring about dependency
     for id in instQueue:
-        if(instQueue[id][4]==0):
+        if(instQueue[id][5]==0):
             ins = instQueue[id]
 
             Vj = None
@@ -329,8 +348,12 @@ def issue(clock):
                 Qj = "i" + str(ins[2])
             else: 
                 # extract value from register at this clock
-                Vj = regF[ins[2]]
-
+                if(ins[2] in regF.keys()):
+                    Vj = regF[ins[2]]
+                else:
+                    if(warnings == 1): print("WARNING: no link in rat found & addr uninitialized in regF. insID =",id,"  clock =",clock,"  addr =", ins[2])
+                    Vj = 0
+                    regF[ins[2]] = 0
 
             # finding val2 in rat
             if(ins[3] in rat.keys() and rat[ins[3]][0] == "i"):
@@ -338,21 +361,37 @@ def issue(clock):
                 Qk = "i" + str(ins[3])
             else: 
                 # extract value from register at this clock
-                Vk = regF[ins[3]]
+                if(ins[3] in regF.keys()):
+                    Vk = regF[ins[3]]
+                else:
+                    if(warnings == 1): print("WARNING: no link in rat found & addr uninitialized in regF. insID =",id,"  clock =",clock,"  addr =", ins[3])
+                    Vk = 0
+                    regF[ins[3]] = 0
+
+                   
 
 
 
             #                             [insID, Busy, OpCode, Vj, Vk, Qj, Qk, DispatchedStageClockCycle]
-            resst[findFreeCore(ins[1])] = [id, 1, ins[0], Vj, Vk, Qj, Qk, None]
+            resst[findFreeCore(ins[1])].append([id, 1, ins[0], Vj, Vk, Qj, Qk, None])
 
             # insert current output address to RAT Table with link
-            rat[ins[1]] = "i"+id
+            rat[ins[1]] = "i"+str(id)
+
+            # change issued flag to 1 in instQueue
+            instQueue[id][5] = 1
 
             # TODO:
+            return 0  # 0 if issued
+            # break
+        print("All instructions were issued")
+        return 1      # 1 if unable to issue
 
 ##### MAIN #####
 clock = 0
 
+
+allInsIssued = 0
 # calculate dependency penalty
 
 
@@ -376,12 +415,16 @@ while(True):
 
 
     ## Issue Stage (written out of order as to run issued instruction in next cycle
-    issue(clock)
+    if(issue(clock)):
+        allInsIssued = 1
         
 
     # for brd in broadcastQueue:
 
     # check for available broadcasts at this clock cycle
 
-    break
+
+    # TODO: Add exit condition
+    if(len(broadcastQueue) == 0 and len(writeBackQueue) == 0 and allInsIssued == 1):
+        break
     clock += 1
