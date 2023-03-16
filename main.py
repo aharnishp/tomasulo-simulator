@@ -50,11 +50,11 @@ rat = {}
 cores = [
             [["add", "adi", "sub", "subi", "and", "or", "xor", "not", "load"],3,[2,2,2,2,2,2,2,2,2]], ## coreID 0
             [["mul", "div"],3,[10,40]],     ## coreID = 1
-            [["mul", "div"],3,[10,40]]      ## coreID = 2
+            # [["mul", "div"],3,[10,40]]      ## coreID = 2
         ]
 
 
-## Dictionary of register file
+## Dictionary of register file ( FORMAT=> { Address: Value } )
 regF = {
     0:0,
     1:0,
@@ -64,7 +64,7 @@ regF = {
 }
 
 
-## Memory to load data from
+## Memory to load data from ( FORMAT=> { Address: Value } )
 memory = {
     134: 256,
     245: 512,
@@ -243,17 +243,17 @@ def broadcast(insID, outputValue):
     resst[delCoreID][delInsIndex][1] = 0
     if(broadcastTelemetry): print("Instruction Broadcasted =", resst[delCoreID][delInsIndex])
 
-    # remove from RAT able
-    ## verify RAT table pointer was not over-written
-    
-    if(RegtoStore in rat.keys()):
-        if(rat[RegtoStore] == "i"+str(insID)):
-            if(broadcastTelemetry): print("BROADCAST: deleting pointer in rat for insID =", insID, " for addr =", RegtoStore)
-            del rat[RegtoStore]
-        else:
-            if(broadcastTelemetry): print("mismatched pointer in RAT, not deleted. addr =",RegtoStore, "  insID =",insID)
-    else:
-        if(broadcastTelemetry): print("Not found in RAT insID =", insID)
+    #### Following code shifted to writeback()
+    # # remove from RAT able
+    # ## verify RAT table pointer was not over-written
+    # if(RegtoStore in rat.keys()):
+    #     if(rat[RegtoStore] == "i"+str(insID)):
+    #         if(broadcastTelemetry): print("BROADCAST: deleting pointer in rat for insID =", insID, " for addr =", RegtoStore)
+    #         del rat[RegtoStore]
+    #     else:
+    #         if(broadcastTelemetry): print("mismatched pointer in RAT, not deleted. addr =",RegtoStore, "  insID =",insID)
+    # else:
+    #     if(broadcastTelemetry): print("Not found in RAT insID =", insID)
 
     # remove from broadcast queue
     if(clock in broadcastQueue.keys()):
@@ -270,6 +270,17 @@ def broadcast(insID, outputValue):
 def writeback(regAddr, value):
     if(value is not None):
         regF[regAddr] = value
+
+    # remove from RAT able
+    ## verify RAT table pointer was not over-written
+    if(RegtoStore in rat.keys()):
+        if(rat[RegtoStore] == "i"+str(insID)):
+            if(broadcastTelemetry): print("WRITEBACK: deleting pointer in rat for insID =", insID, " for addr =", RegtoStore)
+            del rat[RegtoStore]
+        else:
+            if(broadcastTelemetry): print("WRITEBACK: mismatched pointer in RAT, not deleted. addr =",RegtoStore, "  insID =",insID)
+    else:
+        if(broadcastTelemetry): print("Not found in RAT insID =", insID)
 
 def dispatch(coreID, insNum):
     ins = resst[coreID][insNum]
@@ -469,11 +480,6 @@ while(True):
     
 
 
-    ## Dispatch stage
-    for coreID in resst:
-        dispatcher(coreID=coreID)
-
-
     ## Broadcast Stage      (and remove instruction itself from reservation station)
     if(clock in broadcastQueue.keys()):
         pendingBrd = broadcastQueue[clock]
@@ -481,6 +487,11 @@ while(True):
         if(broadcastTelemetry): print("Broadcasting: ", pendingBrd)
         for brd in pendingBrd:
             broadcast(insID=brd[0], outputValue=brd[1])
+
+
+    ## Dispatch stage
+    for coreID in resst:
+        dispatcher(coreID=coreID)
 
 
     ## Writeback Queue      (Separated from broadcast just for simulation)
@@ -503,6 +514,7 @@ while(True):
             allInsIssued = 0
 
 
+    cycleViewer = input("Press enter to continue to next cycle.")
 
     # FIXME: Add exit condition
     if(len(broadcastQueue) == 0 and len(writeBackQueue) == 0 and allInsIssued == 1):
