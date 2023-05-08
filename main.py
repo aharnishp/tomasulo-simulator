@@ -514,9 +514,11 @@ while(True):
             allInsIssued = 0
 
 
+
     cycleViewer = input("Press enter to continue to next cycle.")
 
     # FIXME: Add exit condition
+
     if(len(broadcastQueue) == 0 and len(writeBackQueue) == 0 and allInsIssued == 1):
         break
     clock += 1
