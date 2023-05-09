@@ -29,17 +29,23 @@
 
 
 # Instruction Queue
-#                     0        1         2        3         4              5
-## Format {indx: [Operation, storeTo, input1, input2, immediateData, queuedStatus],}
+#                     0        1         2        3         4              5                6
+## Format {indx: [Operation, storeTo, input1, input2, immediateData, queuedStatus, execution_Core_of_ins],}
+    # execution_Core_of_ins = -1 means it can execute on any core cluster and will be given to sub core with minimum reservation queue.
 instQueue = {
-    # indx 0  1  2  3  4   5
-    0:["load",6, 2, 0,34, 0],
-    1:["load",2, 3, 0,45, 0],
-    2:["mul", 0, 2, 4, 0, 0],
-    3:["sub", 8, 2, 6, 0, 0],
-    4:["div",10, 0, 6, 0, 0],
-    5:["add", 6, 8, 2, 0, 0],
+    # indx 0  1  2  3  4  5  6
+    0:["load",6, 2, 0,34, 0, 0],
+    1:["load",2, 3, 0,45, 0, 0],
+    2:["mul", 0, 2, 4, 0, 0, 0],
+    3:["sub", 8, 2, 6, 0, 0, 1],
+    4:["div",10, 0, 6, 0, 0, 1],
+    5:["add", 6, 8, 2, 0, 0, 1],
 }
+
+L1size = 3 # number of memory locations
+L2size = 6 # number of memory locations
+L3size = 9 # number of memory locations
+
 
 ## RAT table
 # Format => {2:"i5"}
@@ -48,11 +54,16 @@ rat = {}
 # Architecture of core distribution
 ## Format: [[["list of ","operations supported"], #number of rows in Reservation Table, [executionDuration]]]
 cores = [
-            [["add", "adi", "sub", "subi", "and", "or", "xor", "not", "load"],3,[2,2,2,2,2,2,2,2,2]], ## coreID 0
-            [["mul", "div"],3,[10,40]],     ## coreID = 1
-            # [["mul", "div"],3,[10,40]]      ## coreID = 2
+            # execution core 0
+            [["add", "adi", "sub", "subi", "and", "or", "xor", "not", "load"],3,[2,2,2,2,2,2,2,2,2]], ## subcoreID 0
+            [["mul", "div"],3,[10,40]],     ## subcoreID = 1
+
+            # execution core 1
+            [["add", "adi", "sub", "subi", "and", "or", "xor", "not", "load"],3,[2,2,2,2,2,2,2,2,2]], ## subcoreID 2
+            [["mul", "div"],3,[10,40]]      ## subcoreID = 3
         ]
 
+executionCoreCluster = [[0,1],[2,3]]    # [ ( execCore:0 [ 0, 1 ]) , ( execCore:1 [2, 3] ) ]
 
 ## Dictionary of register file ( FORMAT=> { Address: Value } )
 regF = {
@@ -70,16 +81,13 @@ memory = {
     245: 512,
 }
 
-
-
+l1cache = [] # [ (core0: { address: value}), (core1: {address: value}) ]
+l2cache = [] # [ (core0: { address: value}), (core1: {address: value}) ]
+l3cache = [] # [ (core0: { address: value}), (core1: {address: value}) ]
 
 
 ##### PARAMETERS #####
 writeback_delay = 1
-
-
-
-
 
 
 ### Telemetries:    has 3 levels = {0, 1, 2}
@@ -194,9 +202,12 @@ def exec(opc, Val1, Val2, immediateData = 0):
         
     #     return None
 
+def getRegF(addr):
+    return regF[addr]
+
 def evaluatePointer(inPointer):
     if(inPointer[0]== 'r'):
-        return regF[inPointer[1:]]  ## return value from register file after removing 'r'
+        return getRegF(inPointer[1:])  ## return value from register file after removing 'r'
     elif(inPointer[0]=="i"):
         print("Un-updated pointer value was dispatched for execution.")
         return None
@@ -267,9 +278,13 @@ def broadcast(insID, outputValue):
             if(warningTelemetry): print("WARNING: broadcastQueue was already cleared.")
 
 
+def setRegF(regAddr, value):
+    regF[regAddr] = value
+
+
 def writeback(regAddr, value):
     if(value is not None):
-        regF[regAddr] = value
+        setRegF(regAddr, value)
 
     # remove from RAT able
     ## verify RAT table pointer was not over-written
@@ -363,27 +378,28 @@ def dispatcher(coreID):
 
 
 
-def findBestCore(opCode):
+def findBestCore(opCode, execution_Core_of_ins = -1):
     # finding fastest core capable of executing this instruction with least queue
     minDelay = -1
     minDelayCoreID = -1
     for coreID in resst:
-        # check if core can exec the opcode
+        # check if core can exec the opcode && ( execution_Core_of_ins == coreID or execution_Core_of_ins = -1 )
         if((opCode in cores[coreID][0])):
-            # counting number of entries in reservation table for that core.
-            count = 0
-            delay = 0
-            for ins in resst[coreID]:   # summing delay for queues
-                if(ins[1]==1):
-                    thisOpCode = ins[2]
-                    count += 1
-                    delay += cores[coreID][2][(cores[coreID][0].index(thisOpCode))]
-            # adding required delay for current operation
-            delay += cores[coreID][2][(cores[coreID][0].index(opCode))]
-            if((delay < minDelay or minDelay == -1) and count < cores[coreID][1]): # uninitialized min delay
-                minDelay = delay
-                minDelayCoreID = coreID
-                # BETA-ONLY:
+            if((coreID in executionCoreCluster[execution_Core_of_ins]) or ( execution_Core_of_ins == -1 )):
+                # counting number of entries in reservation table for that core.
+                count = 0
+                delay = 0
+                for ins in resst[coreID]:   # summing delay for queues
+                    if(ins[1]==1):
+                        thisOpCode = ins[2]
+                        count += 1
+                        delay += cores[coreID][2][(cores[coreID][0].index(thisOpCode))]
+                # adding required delay for current operation
+                delay += cores[coreID][2][(cores[coreID][0].index(opCode))]
+                if((delay < minDelay or minDelay == -1) and count < cores[coreID][1]): # uninitialized min delay
+                    minDelay = delay
+                    minDelayCoreID = coreID
+                    # BETA-ONLY:
     if(minDelayCoreID == -1):
         if(warningTelemetry): print("Warning: No free core supports the instruction:", opCode)
     return minDelayCoreID
@@ -413,11 +429,11 @@ def issue(clock):
             else: 
                 # extract value from register at this clock
                 if(ins[2] in regF.keys()):
-                    Vj = regF[ins[2]]
+                    Vj = getRegF(ins[2])
                 else:
                     if(warningTelemetry == 1): print("WARNING: no link in rat found & addr uninitialized in regF. insID =",id,"  clock =",clock,"  addr =", ins[2])
                     Vj = 0
-                    regF[ins[2]] = 0
+                    setRegF(ins[2], 0)
 
             # finding val2 in rat
             if(ins[3] in rat.keys() and rat[ins[3]][0] == "i"):
@@ -426,18 +442,18 @@ def issue(clock):
             else: 
                 # extract value from register at this clock
                 if(ins[3] in regF.keys()):
-                    Vk = regF[ins[3]]
+                    Vk = getRegF(ins[3])
                 else:
                     if(warningTelemetry == 1): print("WARNING: no link in rat found & addr uninitialized in regF. insID =",id,"  clock =",clock,"  addr =", ins[3])
                     Vk = 0
-                    regF[ins[3]] = 0
+                    setRegF(ins[3], 0)
 
                    
 
 
 
             #                             [insID, Busy, OpCode, Vj, Vk, Qj, Qk, DispatchedStageClockCycle]
-            bestCore = findBestCore(ins[0])
+            bestCore = findBestCore(ins[0], instQueue[id][6])
             if(bestCore > -1):
                 resst[bestCore].append([id, 1, ins[0], Vj, Vk, Qj, Qk, immediateData, clock, None, None])
             else:
@@ -512,6 +528,7 @@ while(True):
     for  insID in instQueue:
         if(instQueue[insID][5] == 0):
             allInsIssued = 0
+
 
 
 
