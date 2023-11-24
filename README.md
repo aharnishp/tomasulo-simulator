@@ -1,5 +1,7 @@
 # Tomasulo Simulator
-is a python script that can simulate operations taking place at CPU level. 
+is a python script that simulates instruction level parallelism in the CPU, while maintaining correctness. 
+
+Project as a part of course on High Speed Computer Architecture.
 
 #### What steps included?
 In brief, these are the steps:
@@ -11,3 +13,6 @@ This occurs at each compute unit, and has to control when to execute the instruc
 
 ### Broadcast Stage
 This is the "final" step when calculated values are stored at appropriate register and passed to needed executions waiting.
+
+#### What does not work?
+Currently, there is no support for conditional instructions, and hence there is no branch prediction as of yet. 
